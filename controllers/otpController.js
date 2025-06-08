@@ -1,5 +1,5 @@
 const OTP = require('../models/otp');
-const SMSLog = require('../models/smsLog');
+const SmsLog = require('../models/smsLog');
 const twilio = require('twilio');
 require('dotenv').config();
 
@@ -19,6 +19,9 @@ exports.sendOTP = async (req, res) => {
   try {
     const { phoneNumber } = req.body;
     
+    // Log authentication status for debugging
+    console.log('Auth user in sendOTP:', req.user ? `User ID: ${req.user._id}` : 'No user authenticated');
+    
     // Validate phone number
     if (!phoneNumber) {
       return res.status(400).json({ message: 'Phone number is required' });
@@ -33,18 +36,23 @@ exports.sendOTP = async (req, res) => {
       otp,
     });
     
+    // Create OTP message
+    const message = `Your OTP verification code is: ${otp}. Valid for 5 minutes.`;
+    
     // Send OTP via Twilio
     await twilioClient.messages.create({
-      body: `Your OTP verification code is: ${otp}. Valid for 5 minutes.`,
+      body: message,
       from: process.env.TWILIO_PHONE_NUMBER,
       to: phoneNumber,
     });
     
     // Log the successful SMS
-    await SMSLog.create({
+    await SmsLog.create({
       phoneNumber,
-      status: 'sent',
-      messageType: 'otp'
+      status: 'delivered',
+      messageType: 'otp',
+      message: message,
+      user: req.user ? req.user._id : null
     });
     
     res.status(200).json({ 
@@ -55,11 +63,13 @@ exports.sendOTP = async (req, res) => {
     console.error('Error sending OTP:', error);
     
     // Log the failed SMS
-    await SMSLog.create({
+    await SmsLog.create({
       phoneNumber: req.body.phoneNumber,
       status: 'failed',
       messageType: 'otp',
-      errorMessage: error.message
+      message: `OTP verification code. Valid for 5 minutes.`,
+      errorMessage: error.message,
+      user: req.user ? req.user._id : null
     });
     
     res.status(500).json({ 
@@ -127,6 +137,9 @@ exports.sendBulkOTP = async (req, res) => {
   try {
     const { phoneNumbers, totalSMS, pauseAfter, pauseSeconds } = req.body;
     
+    // Log authentication status for debugging
+    console.log('Auth user in sendBulkOTP:', req.user ? `User ID: ${req.user._id}, Role: ${req.user.role}` : 'No user authenticated');
+    
     console.log('Received bulk OTP request:', { 
       phoneNumbersCount: phoneNumbers?.length, 
       totalSMS, 
@@ -156,6 +169,9 @@ exports.sendBulkOTP = async (req, res) => {
       totalMessages: Math.min(totalSMS, phoneNumbers.length)
     });
     
+    // Get user ID for logging
+    const userId = req.user ? req.user._id : null;
+    
     // Process in the background
     setTimeout(async () => {
       try {
@@ -180,22 +196,27 @@ exports.sendBulkOTP = async (req, res) => {
               otp,
             });
             
-                      // Send OTP via Twilio
-          await twilioClient.messages.create({
-            body: `Your OTP verification code is: ${otp}. Valid for 5 minutes.`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: phoneNumber,
-          });
-          
-          // Log the successful SMS
-          await SMSLog.create({
-            phoneNumber,
-            status: 'sent',
-            messageType: 'bulk'
-          });
-          
-          sentCount++;
-          batchCount++;
+            // Create OTP message
+            const message = `Your OTP verification code is: ${otp}. Valid for 5 minutes.`;
+            
+            // Send OTP via Twilio
+            await twilioClient.messages.create({
+              body: message,
+              from: process.env.TWILIO_PHONE_NUMBER,
+              to: phoneNumber,
+            });
+            
+            // Log the successful SMS
+            await SmsLog.create({
+              phoneNumber,
+              status: 'delivered',
+              messageType: 'bulk',
+              message: message,
+              user: userId
+            });
+            
+            sentCount++;
+            batchCount++;
             
             console.log(`Sent OTP ${sentCount}/${totalSMS} to ${phoneNumber}`);
             
@@ -209,19 +230,21 @@ exports.sendBulkOTP = async (req, res) => {
             // Small delay between individual messages to prevent rate limiting
             await sleep(100);
             
-                  } catch (error) {
-          console.error(`Error sending OTP to ${phoneNumber}:`, error);
-          
-          // Log the failed SMS
-          await SMSLog.create({
-            phoneNumber,
-            status: 'failed',
-            messageType: 'bulk',
-            errorMessage: error.message
-          });
-          
-          // Continue with next number even if one fails
-        }
+          } catch (error) {
+            console.error(`Error sending OTP to ${phoneNumber}:`, error);
+            
+            // Log the failed SMS
+            await SmsLog.create({
+              phoneNumber,
+              status: 'failed',
+              messageType: 'bulk',
+              message: `OTP verification code. Valid for 5 minutes.`,
+              errorMessage: error.message,
+              user: userId
+            });
+            
+            // Continue with next number even if one fails
+          }
         }
         
         console.log(`Bulk OTP sending completed. Sent ${sentCount}/${totalSMS} messages successfully.`);

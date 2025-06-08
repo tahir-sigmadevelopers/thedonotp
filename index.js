@@ -22,9 +22,11 @@ app.use(express.json());
 // Routes
 const otpRoutes = require('./routes/otpRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+const userRoutes = require('./routes/userRoutes');
 
 app.use('/api/otp', otpRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/users', userRoutes);
 
 // Root route
 app.get('/', (req, res) => {
