@@ -1,6 +1,7 @@
 const OTP = require('../models/otp');
 const SmsLog = require('../models/smsLog');
 const twilio = require('twilio');
+const { Vonage } = require('@vonage/server-sdk');
 require('dotenv').config();
 
 // Initialize Twilio client
@@ -9,18 +10,44 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
+// Initialize Vonage client
+const vonage = new Vonage({
+  apiKey: process.env.VONAGE_API_KEY || "c4da4f80",
+  apiSecret: process.env.VONAGE_API_SECRET || "QD5qQOCqIAknhI5n"
+});
+
 // Generate a random 6-digit OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// Helper function to send SMS via Twilio
+const sendTwilioSMS = async (phoneNumber, message) => {
+  return twilioClient.messages.create({
+    body: message,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: phoneNumber,
+  });
+};
+
+// Helper function to send SMS via Vonage
+const sendVonageSMS = async (phoneNumber, message) => {
+  const from = process.env.VONAGE_BRAND_NAME || "Vonage APIs";
+  return vonage.sms.send({
+    to: phoneNumber,
+    from: from,
+    text: message
+  });
+};
+
 // Send OTP to phone number
 exports.sendOTP = async (req, res) => {
   try {
-    const { phoneNumber } = req.body;
+    const { phoneNumber, provider = 'twilio' } = req.body;
     
     // Log authentication status for debugging
     console.log('Auth user in sendOTP:', req.user ? `User ID: ${req.user._id}` : 'No user authenticated');
+    console.log('Using SMS provider:', provider);
     
     // Validate phone number
     if (!phoneNumber) {
@@ -39,12 +66,13 @@ exports.sendOTP = async (req, res) => {
     // Create OTP message
     const message = `Your OTP verification code is: ${otp}. Valid for 5 minutes.`;
     
-    // Send OTP via Twilio
-    await twilioClient.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phoneNumber,
-    });
+    // Send OTP via selected provider
+    if (provider === 'vonage') {
+      await sendVonageSMS(phoneNumber, message);
+    } else {
+      // Default to Twilio
+      await sendTwilioSMS(phoneNumber, message);
+    }
     
     // Log the successful SMS
     await SmsLog.create({
@@ -52,6 +80,7 @@ exports.sendOTP = async (req, res) => {
       status: 'delivered',
       messageType: 'otp',
       message: message,
+      provider: provider,
       user: req.user ? req.user._id : null
     });
     
@@ -68,6 +97,7 @@ exports.sendOTP = async (req, res) => {
       status: 'failed',
       messageType: 'otp',
       message: `OTP verification code. Valid for 5 minutes.`,
+      provider: req.body.provider || 'twilio',
       errorMessage: error.message,
       user: req.user ? req.user._id : null
     });
@@ -135,7 +165,7 @@ const sleep = (ms) => {
 // Send OTP in bulk
 exports.sendBulkOTP = async (req, res) => {
   try {
-    const { phoneNumbers, totalSMS, pauseAfter, pauseSeconds } = req.body;
+    const { phoneNumbers, totalSMS, pauseAfter, pauseSeconds, provider = 'twilio' } = req.body;
     
     // Log authentication status for debugging
     console.log('Auth user in sendBulkOTP:', req.user ? `User ID: ${req.user._id}, Role: ${req.user.role}` : 'No user authenticated');
@@ -144,7 +174,8 @@ exports.sendBulkOTP = async (req, res) => {
       phoneNumbersCount: phoneNumbers?.length, 
       totalSMS, 
       pauseAfter, 
-      pauseSeconds 
+      pauseSeconds,
+      provider
     });
     
     // Validate input
@@ -175,7 +206,7 @@ exports.sendBulkOTP = async (req, res) => {
     // Process in the background
     setTimeout(async () => {
       try {
-        console.log(`Starting bulk OTP send: ${totalSMS} messages, pause after ${pauseAfter} for ${pauseSeconds} seconds`);
+        console.log(`Starting bulk OTP send: ${totalSMS} messages, pause after ${pauseAfter} for ${pauseSeconds} seconds using ${provider}`);
         console.log('Phone numbers to process:', phoneNumbers);
         
         let sentCount = 0;
@@ -199,12 +230,13 @@ exports.sendBulkOTP = async (req, res) => {
             // Create OTP message
             const message = `Your OTP verification code is: ${otp}. Valid for 5 minutes.`;
             
-            // Send OTP via Twilio
-            await twilioClient.messages.create({
-              body: message,
-              from: process.env.TWILIO_PHONE_NUMBER,
-              to: phoneNumber,
-            });
+            // Send OTP via selected provider
+            if (provider === 'vonage') {
+              await sendVonageSMS(phoneNumber, message);
+            } else {
+              // Default to Twilio
+              await sendTwilioSMS(phoneNumber, message);
+            }
             
             // Log the successful SMS
             await SmsLog.create({
@@ -212,13 +244,14 @@ exports.sendBulkOTP = async (req, res) => {
               status: 'delivered',
               messageType: 'bulk',
               message: message,
+              provider: provider,
               user: userId
             });
             
             sentCount++;
             batchCount++;
             
-            console.log(`Sent OTP ${sentCount}/${totalSMS} to ${phoneNumber}`);
+            console.log(`Sent OTP ${sentCount}/${totalSMS} to ${phoneNumber} using ${provider}`);
             
             // Check if we need to pause
             if (batchCount >= pauseAfter && i < totalSMS - 1) {
@@ -239,6 +272,7 @@ exports.sendBulkOTP = async (req, res) => {
               status: 'failed',
               messageType: 'bulk',
               message: `OTP verification code. Valid for 5 minutes.`,
+              provider: provider,
               errorMessage: error.message,
               user: userId
             });
@@ -249,9 +283,9 @@ exports.sendBulkOTP = async (req, res) => {
         
         console.log(`Bulk OTP sending completed. Sent ${sentCount}/${totalSMS} messages successfully.`);
       } catch (error) {
-        console.error('Error in background process:', error);
+        console.error('Error in bulk OTP sending background process:', error);
       }
-    }, 100);
+    }, 0);
     
   } catch (error) {
     console.error('Error starting bulk OTP send:', error);

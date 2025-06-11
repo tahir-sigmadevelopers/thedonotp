@@ -20,6 +20,11 @@ const smsLogSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  provider: {
+    type: String,
+    enum: ['twilio', 'vonage'],
+    default: 'twilio',
+  },
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -37,6 +42,7 @@ const smsLogSchema = new mongoose.Schema({
 // Add indexes for common queries
 smsLogSchema.index({ status: 1 });
 smsLogSchema.index({ messageType: 1 });
+smsLogSchema.index({ provider: 1 });
 smsLogSchema.index({ user: 1 });
 
 module.exports = mongoose.model('SmsLog', smsLogSchema); 
